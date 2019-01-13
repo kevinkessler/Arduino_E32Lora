@@ -15,14 +15,15 @@ void setup() {
 void loop() {
   digitalWrite(m0, 1);
   digitalWrite(m1,1);
-  int mes[] = {0xc1,0xc1,0xc1};
-  Serial2.write((uint8_t *)mes,3);
+  uint8_t mes[] = {0xc1,0xc1,0xc1};
+  Serial2.write(mes,3);
   delay(50);
   for (uint8_t n=0;n<6;n++)
   {
-    Serial.print(Serial2.read());
+    Serial.print(Serial2.read(),HEX);
     Serial.print(" ");
   }
   Serial.println("");
+
   delay(1000);
 }
