@@ -383,3 +383,13 @@ E32_STATUS E32Lora::transmit(uint8_t *message, uint16_t length) {
 
 	return E32_OK;
 }
+
+uint8_t E32Lora::recv() {
+  uint8_t buffer[1];
+
+  E32_STATUS status = uartRead(buffer,1,3000);
+  if (status != E32_OK)
+    return 0xff;
+
+  return buffer[0];
+}

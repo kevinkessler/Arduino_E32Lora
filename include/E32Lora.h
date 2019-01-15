@@ -115,7 +115,8 @@ public:
   E32_STATUS setTargetChannel(uint8_t channel);
   E32_STATUS setTargetAddress(uint8_t addr);
   E32_STATUS transmit(uint8_t *message, uint16_t length);
-  
+  uint8_t recv(void);
+
 private:
   uint8_t _m0;
   uint8_t _m1;
