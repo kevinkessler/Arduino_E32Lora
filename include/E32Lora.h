@@ -97,7 +97,8 @@ enum fecSwitch {
 
 class E32Lora {
 public:
-  E32Lora(HardwareSerial &uart, uint8_t m0, uint8_t m1, uint8_t aux);
+  E32Lora(HardwareSerial &uart):_uart(uart){}
+  E32_STATUS begin(uint8_t m0, uint8_t m1, uint8_t aux);
   E32_STATUS getConfig(uint8_t *configBuffer);
   E32_STATUS getVersion(uint8_t *configBuffer);
   E32_STATUS reset();
@@ -115,7 +116,10 @@ public:
   E32_STATUS setTargetChannel(uint8_t channel);
   E32_STATUS setTargetAddress(uint8_t addr);
   E32_STATUS transmit(uint8_t *message, uint16_t length);
-  uint8_t recv(void);
+  uint8_t dataAvailable(void);
+  int16_t receiveData(uint8_t *buffer, uint16_t bufferLegth);
+  void interruptHandler(void);
+  E32_STATUS setMode(uint8_t mode);
 
 private:
   uint8_t _m0;
@@ -124,17 +128,21 @@ private:
   uint8_t _currentConfig[6];
   uint8_t _targetChannel;
   uint16_t _targetAddress;
+  volatile uint8_t _dataAvailable;
+  uint8_t _disableAuxIrq = 0;
   uint32_t _baudRateList[8] = {1200,2400,4800,9600,19200,38400,57600,115200};
   HardwareSerial &_uart;
+  //static E32Lora *instance;
 
   E32_STATUS getMode(void);
-  E32_STATUS setMode(uint8_t mode);
   E32_STATUS waitForAux(uint8_t state);
   E32_STATUS uartRead(uint8_t *buffer, uint16_t length, uint16_t timeout);
   uint32_t getBaud(void);
   E32_STATUS configResponse(uint8_t *response, uint8_t responseLength);
   E32_STATUS configRequest(uint8_t *request, uint8_t requestLength,
   		uint8_t *response, uint8_t responseLength);
+  //static void isr(void);
+
 
 
 };

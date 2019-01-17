@@ -23,14 +23,49 @@
 #include <Arduino.h>
 #include "E32Lora.h"
 
-E32Lora::E32Lora(HardwareSerial &uart, uint8_t m0, uint8_t m1, uint8_t aux):_uart(uart) {
-  //_uart = HardwareSerial(uart_no);
+static E32Lora *instance=NULL;
+void isr(void)
+{
+  instance->interruptHandler();
+}
+
+E32_STATUS E32Lora::begin(uint8_t m0, uint8_t m1, uint8_t aux) {
+  _dataAvailable = 0;
+  if(instance == NULL) {
+    instance = this;
+//    attachInterrupt(digitalPinToInterrupt(aux), isr, FALLING);
+  }
+
   _uart.begin(9600);
-  uint8_t mes[] = {0xc1,0xc1,0xc1};
-  _uart.write(mes,3);
+
   _m0 = m0;
   _m1 = m1;
   _aux = aux;
+
+  pinMode(_m0,OUTPUT);
+  pinMode(_m1,OUTPUT);
+  pinMode(_aux,INPUT);
+
+  uint8_t dummy[6];
+  getConfig(dummy);
+
+  setMode(NORMAL_MODE);
+  // SetMode set the baud rate before it know what it is for the first time
+  // This fixes it
+  _uart.begin(getBaud());
+
+  attachInterrupt(digitalPinToInterrupt(_aux), isr, FALLING);
+
+  return E32_OK;
+}
+
+
+
+void E32Lora::interruptHandler(){
+  if (!_disableAuxIrq)
+    _dataAvailable = 1;
+  else
+    _dataAvailable = 0;
 }
 
 uint8_t E32Lora::getMode()
@@ -65,35 +100,45 @@ E32_STATUS E32Lora::waitForAux(uint8_t state) {
 		delay(1);
 	}
 
+  _dataAvailable = 0;
+  delay(2);
 	return E32_OK;
 }
 
 E32_STATUS E32Lora::setMode(uint8_t mode)
 {
+
 	if (mode == getMode())
 			return E32_OK;
 
-	if (waitForAux(1) != E32_OK)
+
+  _disableAuxIrq = 1;
+	if (waitForAux(1) != E32_OK) {
+    Serial.println("Aux Error 1");
 		return E32_ERROR;
+  }
 
 	digitalWrite(_m0, (mode & 1));
 	digitalWrite(_m1, (mode & 2));
 
-	if (waitForAux(1) != E32_OK)
+	if (waitForAux(1) != E32_OK) {
+    Serial.println("Aux Error 2");
 		return E32_ERROR;
+  }
 
-	if (mode == SLEEP_MODE)
-		_uart.begin(9600);
-	else
-		_uart.begin(getBaud());
+  if (mode == SLEEP_MODE)
+  		_uart.begin(9600);
+  	else
+  		_uart.begin(getBaud());
 
 	delay(50);
 
+  _disableAuxIrq = 0;
 	return E32_OK;
 }
 
 uint32_t E32Lora::getBaud() {
-	return _baudRateList[(_currentConfig[3] & 0xC7) >> 3];
+	return _baudRateList[(_currentConfig[3] & 0x38) >> 3];
 }
 
 E32_STATUS E32Lora::configResponse(uint8_t *response, uint8_t responseLength)
@@ -113,6 +158,7 @@ E32_STATUS E32Lora::configRequest(uint8_t *request, uint8_t requestLength,
 	E32_STATUS error;
 
 	uint8_t origMode = getMode();
+
 	if ((error = setMode(SLEEP_MODE)) != E32_OK)
 		return error;
 
@@ -122,7 +168,6 @@ E32_STATUS E32Lora::configRequest(uint8_t *request, uint8_t requestLength,
 	if(response != NULL)
 		if ((error = configResponse(response, responseLength)) != E32_OK)
 			return error;
-
 
 	if ((error = setMode(origMode)) != E32_OK)
 		return error;
@@ -136,8 +181,9 @@ E32_STATUS E32Lora::getConfig(uint8_t *configBuffer)
 
 	E32_STATUS retval = configRequest(message, 3, configBuffer, 6);
 
-	if (retval == E32_OK)
+	if (retval == E32_OK) {
 		memcpy(_currentConfig, configBuffer, 6);
+  }
 
 	return retval;
 }
@@ -181,6 +227,10 @@ E32_STATUS E32Lora::saveParams()
 		return error;
 
 	return E32_OK;
+}
+
+uint8_t E32Lora::dataAvailable(){
+  return _dataAvailable;
 }
 
 E32_STATUS E32Lora::setAddress(uint16_t addr) {
@@ -366,7 +416,7 @@ E32_STATUS E32Lora::transmit(uint8_t *message, uint16_t length) {
 	if (length > 512)
 		return E32_MESSAGE_TOO_LONG;
 
-	if (_currentConfig[5] & 0x7F) {
+	if (_currentConfig[5] & 0x80) {
 		if(length > 509)
 			return E32_MESSAGE_TOO_LONG;
 		uint8_t header[3 + length];
@@ -384,12 +434,34 @@ E32_STATUS E32Lora::transmit(uint8_t *message, uint16_t length) {
 	return E32_OK;
 }
 
-uint8_t E32Lora::recv() {
-  uint8_t buffer[1];
+int16_t E32Lora::receiveData(uint8_t *buffer, uint16_t bufferLength) {
+  int16_t idx = -1;
+  uint16_t firstByte = 0;
+  uint16_t lastByte = 0;
+  _dataAvailable = 0;
+  for (uint16_t n = 0;n<1000;n++) {
 
-  E32_STATUS status = uartRead(buffer,1,3000);
-  if (status != E32_OK)
-    return 0xff;
+    if((firstByte == 1) && (!_uart.available()))
+      break;
 
-  return buffer[0];
+    while(_uart.available()) {
+      if(firstByte == 0)
+        firstByte = 1;
+
+      lastByte = n;
+      buffer[++idx] = _uart.read();
+
+      if (idx == bufferLength)
+        break;
+    }
+
+    if (idx == bufferLength)
+      break;
+
+    delay(1);
+  }
+
+  Serial.print("Last ");
+  Serial.println(lastByte);
+  return idx;
 }
