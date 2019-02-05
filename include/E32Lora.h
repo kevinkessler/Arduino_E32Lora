@@ -28,11 +28,13 @@
 #define WAKEUP_MODE 2
 #define POWERSAVING_MODE 1
 #define SLEEP_MODE 3
+#define CONFIG_MODE 7
 
 #define E32_OK 0
 #define E32_TIMEOUT 1
 #define E32_ERROR 100
 #define E32_MESSAGE_TOO_LONG 101
+#define E32_INVALID_MODE 102
 
 typedef uint8_t E32_STATUS;
 
@@ -99,10 +101,12 @@ class E32Lora {
 public:
   E32Lora(HardwareSerial &uart):_uart(uart){}
   E32_STATUS begin(uint8_t m0, uint8_t m1, uint8_t aux);
+  E32_STATUS setConfig(uint8_t *configBuffer);
   E32_STATUS getConfig(uint8_t *configBuffer);
   E32_STATUS getVersion(uint8_t *configBuffer);
   E32_STATUS reset();
   E32_STATUS saveParams();
+  E32_STATUS setParams(void);
   E32_STATUS setAddress(uint16_t addr);
   E32_STATUS setParity(enum uartParity parity);
   E32_STATUS setUartBaud(enum uartBaud baud);

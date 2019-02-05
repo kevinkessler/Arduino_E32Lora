@@ -33,7 +33,7 @@ E32_STATUS E32Lora::begin(uint8_t m0, uint8_t m1, uint8_t aux) {
   _dataAvailable = 0;
   if(instance == NULL) {
     instance = this;
-//    attachInterrupt(digitalPinToInterrupt(aux), isr, FALLING);
+    attachInterrupt(digitalPinToInterrupt(_aux), isr, FALLING);
   }
 
   _uart.begin(9600);
@@ -54,7 +54,6 @@ E32_STATUS E32Lora::begin(uint8_t m0, uint8_t m1, uint8_t aux) {
   // This fixes it
   _uart.begin(getBaud());
 
-  attachInterrupt(digitalPinToInterrupt(_aux), isr, FALLING);
 
   return E32_OK;
 }
@@ -108,21 +107,23 @@ E32_STATUS E32Lora::waitForAux(uint8_t state) {
 E32_STATUS E32Lora::setMode(uint8_t mode)
 {
 
-	if (mode == getMode())
+  uint8_t prevMode = getMode();
+	if (mode == prevMode)
 			return E32_OK;
 
 
   _disableAuxIrq = 1;
 	if (waitForAux(1) != E32_OK) {
-    Serial.println("Aux Error 1");
 		return E32_ERROR;
   }
 
 	digitalWrite(_m0, (mode & 1));
 	digitalWrite(_m1, (mode & 2));
 
+  // Got to delay to catch the falling edge and then wait for rise again
+  delay(2);
+
 	if (waitForAux(1) != E32_OK) {
-    Serial.println("Aux Error 2");
 		return E32_ERROR;
   }
 
@@ -131,9 +132,23 @@ E32_STATUS E32Lora::setMode(uint8_t mode)
   	else
   		_uart.begin(getBaud());
 
-	delay(50);
+  //Wake up needs a 200ms delay before things start to work
+  if(prevMode == SLEEP_MODE) {
+    delay(250);
+    _disableAuxIrq=0;
+  }
+  else if(mode==CONFIG_MODE) {
+    uint8_t message[]={0xc1, 0xc1, 0xc1 };
+    E32_STATUS error = configRequest(message, 3, _currentConfig, 6);
+    if(error != E32_OK)
+      return error;
+    _disableAuxIrq = 1;
+  }
+  else {
+    delay(50);
+    _disableAuxIrq = 0;
+  }
 
-  _disableAuxIrq = 0;
 	return E32_OK;
 }
 
@@ -157,17 +172,62 @@ E32_STATUS E32Lora::configRequest(uint8_t *request, uint8_t requestLength,
 {
 	E32_STATUS error;
 
-	uint8_t origMode = getMode();
-
-	if ((error = setMode(SLEEP_MODE)) != E32_OK)
-		return error;
-
-	 if (_uart.write(request, requestLength) != requestLength)
-      return E32_ERROR;
+	if (_uart.write(request, requestLength) != requestLength)
+    return E32_ERROR;
 
 	if(response != NULL)
 		if ((error = configResponse(response, responseLength)) != E32_OK)
 			return error;
+
+	return E32_OK;
+}
+
+E32_STATUS E32Lora::setConfig(uint8_t *configBuffer)
+{
+  E32_STATUS error;
+
+  uint8_t origMode = getMode();
+  if ((error = setMode(SLEEP_MODE)) != E32_OK)
+    return error;
+
+  if((error=configRequest(configBuffer,6,NULL,0))!=E32_OK) {
+    return error;
+  }
+
+  if ((error = setMode(origMode)) != E32_OK)
+    return error;
+
+  return error;
+}
+
+E32_STATUS E32Lora::getConfig(uint8_t *configBuffer)
+{
+	uint8_t message[]={0xc1, 0xc1, 0xc1 };
+  E32_STATUS error;
+
+  uint8_t origMode = getMode();
+  if ((error = setMode(SLEEP_MODE)) != E32_OK)
+    return error;
+
+  error = configRequest(message, 3, configBuffer, 6);
+  memcpy(_currentConfig,configBuffer,6);
+  if ((error = setMode(origMode)) != E32_OK)
+  	return error;
+
+  return E32_OK;
+
+}
+
+E32_STATUS E32Lora::getVersion(uint8_t *versionBuffer)
+{
+  uint8_t message[]={0xc3, 0xc3, 0xc3 };
+	E32_STATUS error;
+
+	uint8_t origMode = getMode();
+	if ((error = setMode(SLEEP_MODE)) != E32_OK)
+		return error;
+
+	error = configRequest(message, 3, versionBuffer, 6);
 
 	if ((error = setMode(origMode)) != E32_OK)
 		return error;
@@ -175,30 +235,13 @@ E32_STATUS E32Lora::configRequest(uint8_t *request, uint8_t requestLength,
 	return E32_OK;
 }
 
-E32_STATUS E32Lora::getConfig(uint8_t *configBuffer)
-{
-	uint8_t message[]={0xc1, 0xc1, 0xc1 };
-
-	E32_STATUS retval = configRequest(message, 3, configBuffer, 6);
-
-	if (retval == E32_OK) {
-		memcpy(_currentConfig, configBuffer, 6);
-  }
-
-	return retval;
-}
-
-E32_STATUS E32Lora::getVersion(uint8_t *configBuffer)
-{
-	uint8_t message[]={0xc3, 0xc3, 0xc3 };
-
-	return configRequest(message, 3, configBuffer, 6);
-}
-
 E32_STATUS E32Lora::reset()
 {
-	uint8_t message[] = {0xc4, 0xc4, 0xc4};
+  uint8_t message[] = {0xc4, 0xc4, 0xc4};
 	E32_STATUS error;
+
+	if ((error = setMode(SLEEP_MODE)) != E32_OK)
+		return error;
 
 	if((error = configRequest(message,3,NULL,0)) != E32_OK)
 		return error;
@@ -206,7 +249,7 @@ E32_STATUS E32Lora::reset()
 	if ((error=waitForAux(0)) != E32_OK)
 		return error;
 
-	if ((error= waitForAux(1)) != E32_OK)
+	if ((error=waitForAux(1)) != E32_OK)
 		return error;
 
 	if((error = setMode(NORMAL_MODE)) != E32_OK)
@@ -217,13 +260,29 @@ E32_STATUS E32Lora::reset()
 
 E32_STATUS E32Lora::saveParams()
 {
-	uint8_t config[6];
-	E32_STATUS error;
+  E32_STATUS error;
 
-	if((error=getConfig(config)) != E32_OK)
+	if (getMode() != SLEEP_MODE)
+		return E32_INVALID_MODE;
+
+	_currentConfig[0] = '\xc0';
+
+	if((error=configRequest(_currentConfig,6,NULL,0))!=E32_OK)
 		return error;
 
-	if((error=configRequest(config,6,NULL,0))!=E32_OK)
+	return E32_OK;
+}
+
+E32_STATUS E32Lora::setParams()
+{
+  E32_STATUS error;
+
+	if (getMode() != SLEEP_MODE)
+		return E32_INVALID_MODE;
+
+	_currentConfig[0] = '\xc2';
+
+	if((error=configRequest(_currentConfig,6,NULL,0))!=E32_OK)
 		return error;
 
 	return E32_OK;
@@ -234,168 +293,99 @@ uint8_t E32Lora::dataAvailable(){
 }
 
 E32_STATUS E32Lora::setAddress(uint16_t addr) {
-	uint8_t config[6], resp[6];
-	E32_STATUS error;
+  if (getMode() != SLEEP_MODE)
+    return E32_INVALID_MODE;
 
-	if((error=getConfig(config)) != E32_OK)
-		return error;
-
-	config[0] = 0xc2;
-	config[1] = (addr & 0xff00) >> 8;
-	config[2] = addr & 0xff;
-
-	if ((error=configRequest(config, 6 , resp, 6)) != E32_OK)
-		return error;
+    _currentConfig[1] = (addr & 0xff00) >> 8;
+    _currentConfig[2] = addr & 0xff;
 
 	return E32_OK;
 }
 
 E32_STATUS E32Lora::setParity(enum uartParity parity) {
-	uint8_t config[6], resp[6];
-	E32_STATUS error;
+  	if (getMode() != SLEEP_MODE)
+  		return E32_INVALID_MODE;
 
-	if((error=getConfig(config)) != E32_OK)
-		return error;
+  	_currentConfig[3] = (_currentConfig[3] & 0x3f) | parity << 6;
 
-	config[0] = 0xc2;
-	config[3] = (config[3] & 0x3f) | parity << 6;
-
-	if ((error=configRequest(config, 6 , resp, 6)) != E32_OK)
-		return error;
-
-	return E32_OK;
-
+  	return E32_OK;
 }
 
 E32_STATUS E32Lora::setUartBaud(enum uartBaud baud)
 {
-	uint8_t config[6], resp[6];
-	E32_STATUS error;
+  if (getMode() != SLEEP_MODE) {
+		_uart.begin(_baudRateList[baud]);
+		return E32_OK;
+	}
 
-	if((error=getConfig(config)) != E32_OK)
-		return error;
-
-	config[0] = 0xc2;
-	config[3] = (config[3] & 0xc7) | baud << 3;
-
-	if ((error=configRequest(config, 6 , resp, 6)) != E32_OK)
-		return error;
+	_currentConfig[3] = (_currentConfig[3] & 0xc7) | baud << 3;
 
 	return E32_OK;
 }
 
 E32_STATUS E32Lora::setAirRate(enum airRate rate)
 {
-	uint8_t config[6], resp[6];
-	E32_STATUS error;
+  if (getMode() != SLEEP_MODE)
+		return E32_INVALID_MODE;
 
-	if((error=getConfig(config)) != E32_OK)
-		return error;
-
-	config[0] = 0xc2;
-	config[3] = (config[3] & 0xF8) | rate;
-
-	if ((error=configRequest(config, 6 , resp, 6)) != E32_OK)
-		return error;
+	_currentConfig[3] = (_currentConfig[3] & 0xF8) | rate;
 
 	return E32_OK;
 }
 
 E32_STATUS E32Lora::setChannel(uint8_t channel)
 {
-	uint8_t config[6], resp[6];
-	E32_STATUS error;
+  if (getMode() != SLEEP_MODE)
+		return E32_INVALID_MODE;
 
-	if((error=getConfig(config)) != E32_OK)
-		return error;
-
-	config[0] = 0xc2;
-	config[4] = channel & 0x1F;
-
-	if ((error=configRequest(config, 6 , resp, 6)) != E32_OK)
-		return error;
+	_currentConfig[4] = channel & 0x1F;
 
 	return E32_OK;
 }
 
 E32_STATUS E32Lora::setTransmissionMode(enum txMode mode)
 {
-	uint8_t config[6], resp[6];
-	E32_STATUS error;
+  if (getMode() != SLEEP_MODE)
+		return E32_INVALID_MODE;
 
-	if((error=getConfig(config)) != E32_OK)
-		return error;
-
-	config[0] = 0xc2;
-	config[5] = (config[5] & 0x7F) | mode << 7;
-
-	if ((error=configRequest(config, 6 , resp, 6)) != E32_OK)
-		return error;
+	_currentConfig[5] = (_currentConfig[5] & 0x7F) | mode << 7;
 
 	return E32_OK;
 }
 
 E32_STATUS E32Lora::setIOMode(enum ioMode mode)
 {
-	uint8_t config[6], resp[6];
-	E32_STATUS error;
+  if (getMode() != SLEEP_MODE)
+		return E32_INVALID_MODE;
 
-	if((error=getConfig(config)) != E32_OK)
-		return error;
-
-	config[0] = 0xc2;
-	config[5] = (config[5] & 0xBF) | mode << 6;
-
-	if ((error=configRequest(config, 6 , resp, 6)) != E32_OK)
-		return error;
+	_currentConfig[5] = (_currentConfig[5] & 0xBF) | mode << 6;
 
 	return E32_OK;
 }
 
 E32_STATUS E32Lora::setWakeTime(enum wakeupTime wake) {
-	uint8_t config[6], resp[6];
-	E32_STATUS error;
+  if (getMode() != SLEEP_MODE)
+		return E32_INVALID_MODE;
 
-	if((error= getConfig(config)) != E32_OK)
-		return error;
-
-	config[0] = 0xc2;
-	config[5] = (config[5] & 0xC7) | wake << 3;
-
-	if ((error=configRequest(config, 6 , resp, 6)) != E32_OK)
-		return error;
+	_currentConfig[5] = (_currentConfig[5] & 0xC7) | wake << 3;
 
 	return E32_OK;
 }
 
 E32_STATUS E32Lora::setFECSwitch(enum fecSwitch fec) {
-	uint8_t config[6], resp[6];
-	E32_STATUS error;
+  if (getMode() != SLEEP_MODE)
+		return E32_INVALID_MODE;
 
-	if((error=getConfig(config)) != E32_OK)
-		return error;
-
-	config[0] = 0xc2;
-	config[5] = (config[5] & 0xFB) | fec << 2;
-
-	if ((error=configRequest(config, 6 , resp, 6)) != E32_OK)
-		return error;
+	_currentConfig[5] = (_currentConfig[5] & 0xFB) | fec << 2;
 
 	return E32_OK;
 }
 
 E32_STATUS E32Lora::setTXPower(enum txPower power) {
-	uint8_t config[6], resp[6];
-	E32_STATUS error;
+  if (getMode() != SLEEP_MODE)
+		return E32_INVALID_MODE;
 
-	if((error=getConfig(config)) != E32_OK)
-		return error;
-
-	config[0] = 0xc2;
-	config[5] = (config[5] & 0xFC) | power;
-
-	if ((error=configRequest(config, 6 , resp, 6)) != E32_OK)
-		return error;
+	_currentConfig[5] = (_currentConfig[5] & 0xFC) | power;
 
 	return E32_OK;
 }
@@ -413,6 +403,9 @@ E32_STATUS E32Lora::setTargetAddress(uint8_t addr) {
 }
 
 E32_STATUS E32Lora::transmit(uint8_t *message, uint16_t length) {
+  if (getMode() == SLEEP_MODE)
+    return E32_INVALID_MODE;
+
 	if (length > 512)
 		return E32_MESSAGE_TOO_LONG;
 
@@ -437,7 +430,10 @@ E32_STATUS E32Lora::transmit(uint8_t *message, uint16_t length) {
 int16_t E32Lora::receiveData(uint8_t *buffer, uint16_t bufferLength) {
   int16_t idx = -1;
   uint16_t firstByte = 0;
-  uint16_t lastByte = 0;
+
+  if (getMode() == SLEEP_MODE)
+    return E32_INVALID_MODE;
+
   _dataAvailable = 0;
   for (uint16_t n = 0;n<1000;n++) {
 
@@ -448,7 +444,6 @@ int16_t E32Lora::receiveData(uint8_t *buffer, uint16_t bufferLength) {
       if(firstByte == 0)
         firstByte = 1;
 
-      lastByte = n;
       buffer[++idx] = _uart.read();
 
       if (idx == bufferLength)
@@ -461,7 +456,5 @@ int16_t E32Lora::receiveData(uint8_t *buffer, uint16_t bufferLength) {
     delay(1);
   }
 
-  Serial.print("Last ");
-  Serial.println(lastByte);
   return idx;
 }
