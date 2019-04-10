@@ -268,8 +268,9 @@ E32_STATUS E32Lora::reset()
   // Hack to get the E32's attention
   _disableAuxIrq=1;
   _uart.write(0);
+  delay(10);
   _disableAuxIrq=0;
-  
+
 	return E32_OK;
 }
 
