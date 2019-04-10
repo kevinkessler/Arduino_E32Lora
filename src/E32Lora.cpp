@@ -31,12 +31,6 @@ void isr(void)
 
 E32_STATUS E32Lora::begin(uint8_t m0, uint8_t m1, uint8_t aux) {
   _dataAvailable = 0;
-  if(instance == NULL) {
-    instance = this;
-    attachInterrupt(digitalPinToInterrupt(_aux), isr, FALLING);
-  }
-
-  _uart.begin(9600);
 
   _m0 = m0;
   _m1 = m1;
@@ -46,11 +40,18 @@ E32_STATUS E32Lora::begin(uint8_t m0, uint8_t m1, uint8_t aux) {
   pinMode(_m1,OUTPUT);
   pinMode(_aux,INPUT);
 
+  if(instance == NULL) {
+    instance = this;
+    attachInterrupt(digitalPinToInterrupt(_aux), isr, FALLING);
+  }
+
+  _uart.begin(9600);
+
   uint8_t dummy[6];
   getConfig(dummy);
 
   setMode(NORMAL_MODE);
-  // SetMode set the baud rate before it know what it is for the first time
+  // SetMode set the baud rate before it knows what it is for the first time
   // This fixes it
   _uart.begin(getBaud());
 
@@ -252,12 +253,22 @@ E32_STATUS E32Lora::reset()
 	if ((error=waitForAux(1)) != E32_OK)
 		return error;
 
+  if ((error=waitForAux(0)) != E32_OK)
+		return error;
+
+  //Hack to get around a little blip in the aux line
+  delay(10);
+
+  if ((error=waitForAux(1)) != E32_OK)
+		return error;
+    
 	if((error = setMode(NORMAL_MODE)) != E32_OK)
 		return error;
 
 	return E32_OK;
 }
 
+// Save parameters in flash, survives restart
 E32_STATUS E32Lora::saveParams()
 {
   E32_STATUS error;
@@ -273,6 +284,7 @@ E32_STATUS E32Lora::saveParams()
 	return E32_OK;
 }
 
+// Set parameters in memory, does not survive a restart
 E32_STATUS E32Lora::setParams()
 {
   E32_STATUS error;
