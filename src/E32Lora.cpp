@@ -265,6 +265,11 @@ E32_STATUS E32Lora::reset()
 	if((error = setMode(NORMAL_MODE)) != E32_OK)
 		return error;
 
+  // Hack to get the E32's attention
+  _disableAuxIrq=1;
+  _uart.write(0);
+  _disableAuxIrq=0;
+  
 	return E32_OK;
 }
 
